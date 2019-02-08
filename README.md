@@ -1,5 +1,7 @@
 # httpBodyRecorder
 
+Record http request/response body/payload
+
 ## Extend HttpBodyRecorderFilter
 
 ```java
