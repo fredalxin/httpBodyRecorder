@@ -25,30 +25,35 @@ public abstract class HttpBodyRecorderFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-        if (this.codeMatched(response.getStatus(), recordCode())) {
-            boolean isFirstRequest = !isAsyncDispatch(request);
-            HttpServletRequest requestToUse = request;
+        boolean isFirstRequest = !isAsyncDispatch(request);
+        HttpServletRequest requestToUse = request;
 
-            if (isFirstRequest
-                    && !(request instanceof ContentCachingRequestWrapper)
-                    && (request.getMethod().equals(HttpMethod.PUT.name()) || request.getMethod().equals(HttpMethod.POST.name()))) {
-                requestToUse = new ContentCachingRequestWrapper(request);
-            }
+        if (isFirstRequest
+                && !(request instanceof ContentCachingRequestWrapper)
+                && (request.getMethod().equals(HttpMethod.PUT.name()) || request.getMethod().equals(HttpMethod.POST.name()))) {
+            requestToUse = new ContentCachingRequestWrapper(request);
+        }
 
-            HttpServletResponse responseToUse = response;
-            if (!(response instanceof ContentCachingResponseWrapper)) {
-                responseToUse = new ContentCachingResponseWrapper(response);
-            }
+        HttpServletResponse responseToUse = response;
+        if (!(response instanceof ContentCachingResponseWrapper)
+                && (request.getMethod().equals(HttpMethod.PUT.name()) || request.getMethod().equals(HttpMethod.POST.name()))) {
+            responseToUse = new ContentCachingResponseWrapper(response);
+        }
 
-            try {
-                filterChain.doFilter(requestToUse, responseToUse);
-            } finally {
-                if (!isAsyncStarted(requestToUse)) {
-                    recordBody(createRequest(requestToUse), createResponse(responseToUse));
-                }
+        boolean hasException = false;
+        try {
+            filterChain.doFilter(requestToUse, responseToUse);
+        } catch (final Exception e) {
+            hasException = true;
+            throw e;
+        } finally {
+            int code = hasException ? 500 : response.getStatus();
+            if (!isAsyncStarted(requestToUse)
+                    && (this.codeMatched(code, recordCode()))) {
+                recordBody(createRequest(requestToUse), createResponse(responseToUse));
+            } else {
+                writeResponseBack(responseToUse);
             }
-        } else {
-            filterChain.doFilter(request, response);
         }
     }
 
@@ -78,6 +83,18 @@ public abstract class HttpBodyRecorderFilter extends OncePerRequestFilter {
         }
         return response;
     }
+
+    protected void writeResponseBack(HttpServletResponse resp) {
+        ContentCachingResponseWrapper wrapper = WebUtils.getNativeResponse(resp, ContentCachingResponseWrapper.class);
+        if (wrapper != null) {
+            try {
+                wrapper.copyBodyToResponse();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
 
     private String genPayload(String payload, byte[] buf, String characterEncoding) {
         if (buf.length > 0 && buf.length < getMaxPayloadLength()) {
